@@ -75,8 +75,20 @@ static Frac derivate_frac(const Frac& F){ Frac R; Poly p1=derivate_poly(F.p); Po
 // Output formatting
 static void output_poly(const Poly& P){
     if(P.t.empty()){ cout << 0; return; }
+    // Sort for output: x-terms by b desc, then sin-terms by c desc, then cos-terms by d desc, then constants
+    auto group_of = [](const Term& t){ if(t.b>0) return 0; if(t.c>0) return 1; if(t.d>0) return 2; return 3; };
+    vector<Term> out = P.t;
+    sort(out.begin(), out.end(), [&](const Term& u, const Term& v){
+        int gu = group_of(u), gv = group_of(v);
+        if(gu!=gv) return gu<gv;
+        if(gu==0){ if(u.b!=v.b) return u.b>v.b; if(u.c!=v.c) return u.c>v.c; if(u.d!=v.d) return u.d>v.d; }
+        else if(gu==1){ if(u.c!=v.c) return u.c>v.c; if(u.d!=v.d) return u.d>v.d; if(u.b!=v.b) return u.b>v.b; }
+        else if(gu==2){ if(u.d!=v.d) return u.d>v.d; if(u.c!=v.c) return u.c>v.c; if(u.b!=v.b) return u.b>v.b; }
+        // constants or tie-breaker by coefficient magnitude
+        return llabs(u.a)>llabs(v.a);
+    });
     bool first=true;
-    for(const auto &x: P.t){
+    for(const auto &x: out){
         long long a=x.a; int b=x.b,c=x.c,d=x.d;
         if(a==0) continue;
         if(first){
@@ -91,18 +103,10 @@ static void output_poly(const Poly& P){
             if(llabs(a)!=1){ cout << llabs(a); printed=true; }
             else if(a==-1){ /* handled sign earlier */ }
         }
-        auto print_pow=[&](const char* base,int k){
-            if(k<=0) return;
-            if(printed) cout;
-            if(strcmp(base,"x")==0){ cout << 'x'; }
-            else cout << base;
-            if(k>1) cout << '^' << k;
-            printed=true;
-        };
-        // x^b sin^c x cos^d x in required order: x, sinx, cosx
+        // x^b sin^c x cos^d x in required order: x, sin^k x, cos^k x
         if(b>0){ cout << 'x'; if(b>1) cout << '^' << b; printed=true; }
-        if(c>0){ cout << "sinx"; if(c>1) cout << '^' << c; printed=true; }
-        if(d>0){ cout << "cosx"; if(d>1) cout << '^' << d; printed=true; }
+        if(c>0){ cout << "sin"; if(c>1) cout << '^' << c; cout << 'x'; printed=true; }
+        if(d>0){ cout << "cos"; if(d>1) cout << '^' << d; cout << 'x'; printed=true; }
         if(!printed){ cout << 1; }
     }
 }
@@ -122,42 +126,34 @@ static void output_frac(const Frac& F){
 static bool isnum(char c){ return c>='0'&&c<='9'; }
 
 static long long get_number(const string& s, int l, int r){
-    // parse integer in s[l:r), sign allowed; if no digits, return +/-1 based on sign
-    bool neg=false; long long val=0; bool has=false;
-    for(int i=l;i<r;i++){
-        char ch=s[i];
-        if(ch=='+'||ch=='-'){
-            if(ch=='-') neg=!neg; // handle multiple signs by toggling
-        }else if(isnum(ch)){
-            has=true; val = val*10 + (ch-'0');
-        }
-    }
+    // parse leading integer coefficient in s[l:r). If absent, return +/-1 based on leading sign.
+    int i=l; bool neg=false; if(i<r && (s[i]=='+'||s[i]=='-')){ neg = (s[i]=='-'); ++i; }
+    long long val=0; bool has=false;
+    while(i<r && isnum(s[i])){ has=true; val = val*10 + (s[i]-'0'); ++i; }
     if(!has) return neg?-1:1;
     return neg? -val: val;
 }
 
 static Term get_term(const string& s, int l, int r){
-    // parse a term ax^b sin^c x cos^d x; input segment guaranteed no +/- or * or / outer
+    // parse a term ax^b sin^c x cos^d x; input segment guaranteed no top-level +/- or * or /
     long long a = get_number(s,l,r);
     int b=0,c=0,d=0;
-    for(int i=l;i<r;){
-        if(s[i]=='x'){
-            ++b; ++i;
-            if(i<r && s[i]=='^'){
-                ++i; int j=i; while(j<r && isnum(s[j])) ++j;
-                b = stoi(s.substr(i,j-i)); i=j;
-            }
-        } else if(i+2<r && s[i]=='s' && s[i+1]=='i' && s[i+2]=='n'){
-            i+=3; // expect 'x'
-            if(i<r && s[i]=='x') ++i; // 'sinx'
-            ++c;
-            if(i<r && s[i]=='^'){
-                ++i; int j=i; while(j<r && isnum(s[j])) ++j; c = stoi(s.substr(i,j-i)); i=j; }
-        } else if(i+2<r && s[i]=='c' && s[i+1]=='o' && s[i+2]=='s'){
-            i+=3; if(i<r && s[i]=='x') ++i; ++d; if(i<r && s[i]=='^'){ ++i; int j=i; while(j<r && isnum(s[j])) ++j; d = stoi(s.substr(i,j-i)); i=j; }
-        } else {
-            ++i; // skip
+    // move cursor past coefficient (optional sign+digits)
+    int i=l; if(i<r && (s[i]=='+'||s[i]=='-')) ++i; while(i<r && isnum(s[i])) ++i;
+    while(i<r){
+        if(i+2<r && s[i]=='s' && s[i+1]=='i' && s[i+2]=='n'){
+            i+=3; int k=1; if(i<r && s[i]=='^'){ ++i; int j=i; while(j<r && isnum(s[j])) ++j; k = stoi(s.substr(i,j-i)); i=j; }
+            if(i<r && s[i]=='x') ++i; c += k; continue;
         }
+        if(i+2<r && s[i]=='c' && s[i+1]=='o' && s[i+2]=='s'){
+            i+=3; int k=1; if(i<r && s[i]=='^'){ ++i; int j=i; while(j<r && isnum(s[j])) ++j; k = stoi(s.substr(i,j-i)); i=j; }
+            if(i<r && s[i]=='x') ++i; d += k; continue;
+        }
+        if(s[i]=='x'){
+            ++i; int k=1; if(i<r && s[i]=='^'){ ++i; int j=i; while(j<r && isnum(s[j])) ++j; k = stoi(s.substr(i,j-i)); i=j; }
+            b += k; continue;
+        }
+        ++i;
     }
     return Term{a,b,c,d};
 }
@@ -197,4 +193,3 @@ int main(){
     output_frac(f); cout << "\n"; output_frac(g); cout << "\n";
     return 0;
 }
-
